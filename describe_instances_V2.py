@@ -46,6 +46,12 @@ for page in paginator.paginate(
 
             instance_type = instance["InstanceType"]
 
+            # Spot / Capacity Block instances never consume an ODCR
+            # InstanceLifecycle is absent (None) for On-Demand -> fall through and process
+            # "spot" / "capacity-block" -> continue skips to the next instance
+            if instance.get("InstanceLifecycle"):
+                continue
+
             state = instance["State"]["Name"]
 
             # Returns Capacity Reservation ID if present,
