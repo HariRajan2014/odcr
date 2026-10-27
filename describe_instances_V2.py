@@ -20,6 +20,37 @@ instances = []
 # Running instances that already have a Capacity Reservation
 skipped_instances = []
 
+# Existing active ODCRs with unused slots, reported to the ops team via SNS
+unused_capacity_reservations = []
+
+for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
+    Filters=[
+        {
+            "Name": "state",
+            "Values": ["active"]
+        }
+    ]
+):
+
+    for cr in cr_page["CapacityReservations"]:
+
+        if cr["AvailableInstanceCount"] == 0:
+            continue
+
+        unused_capacity_reservations.append({
+            "capacityReservationId": cr["CapacityReservationId"],
+            "instanceType": cr["InstanceType"],
+            "instancePlatform": cr["InstancePlatform"],
+            "availabilityZone": cr["AvailabilityZone"],
+            "tenancy": cr["Tenancy"],
+            "instanceMatchCriteria": cr["InstanceMatchCriteria"],
+            "totalInstanceCount": cr["TotalInstanceCount"],
+            "availableInstanceCount": cr["AvailableInstanceCount"],
+            "endDateType": cr["EndDateType"],
+            # Absent for unlimited ODCRs; datetime -> string for JSON output
+            "endDate": cr["EndDate"].isoformat() if cr.get("EndDate") else None
+        })
+
 
 for page in paginator.paginate(
     IncludeManagedResources=False,
@@ -81,6 +112,10 @@ for page in paginator.paginate(
 
                 continue
 
+            # Not handled by design: stopped instances already covered by an existing ODCR are
+            # not detected. ODCR lifecycle is aligned to the patching window, and unused ODCRs
+            # are alerted via CloudWatch and reported in unusedCapacityReservations for manual action.
+
             # ------------------------------
             # Needs a new ODCR
             # ------------------------------
@@ -104,7 +139,8 @@ for page in paginator.paginate(
 # Final result
 result = {
     "instances": instances,
-    "skippedInstances": skipped_instances
+    "skippedInstances": skipped_instances,
+    "unusedCapacityReservations": unused_capacity_reservations
 }
 
 
