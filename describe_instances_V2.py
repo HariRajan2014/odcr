@@ -31,6 +31,11 @@ for page in paginator.paginate(
         {
             "Name": "tenancy",
             "Values": ["default"]
+        },
+        {
+            # g5 -> g5.* (matches g5.xlarge, g5.2xlarge, ...)
+            "Name": "instance-type",
+            "Values": [f"{f}.*" for f in families]
         }
     ]
 ):
@@ -40,14 +45,6 @@ for page in paginator.paginate(
         for instance in reservation["Instances"]:
 
             instance_type = instance["InstanceType"]
-
-            # g5.2xlarge -> g5
-            # g6.4xlarge -> g6
-            family = instance_type.split(".")[0]
-
-            # Ignore instance families not selected
-            if family not in families:
-                continue
 
             state = instance["State"]["Name"]
 
