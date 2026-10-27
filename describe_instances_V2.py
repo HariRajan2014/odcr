@@ -46,6 +46,10 @@ for page in paginator.paginate(
 
             instance_type = instance["InstanceType"]
 
+            # Spot / Capacity Block instances never consume an ODCR
+            if instance.get("InstanceLifecycle"):
+                continue
+
             state = instance["State"]["Name"]
 
             # Returns Capacity Reservation ID if present,
