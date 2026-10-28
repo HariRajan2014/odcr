@@ -1,30 +1,37 @@
 import boto3
 import json
+from datetime import datetime, timezone
 
 
 # Inputs
 region = "eu-west-1"
 families = ["g5", "g6", "t3", "c7i"]
-end_date = "2026-10-26T23:59:00Z"
+# UTC, DD-MM-YYYY HH:MM
+end_date_utc = "30-11-2026 23:59"
+
+requested_end = datetime.strptime(end_date_utc, "%d-%m-%Y %H:%M").replace(tzinfo=timezone.utc)
+
+# ISO 8601 form required by EC2 CreateCapacityReservation
+end_date_iso = requested_end.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Create EC2 client
 ec2 = boto3.client("ec2", region_name=region)
 
-# Paginator for DescribeInstances
-paginator = ec2.get_paginator("describe_instances")
-
 # Instances that need a new ODCR
 instances = []
 
-# Running instances that already have a Capacity Reservation
-skipped_instances = []
+# Running instances already in an ODCR; status says whether that ODCR lasts until end_date_utc
+instances_with_existing_odcr = []
 
 # Instances that will never use an open ODCR (preference "none" or targeted), reported via SNS
 ineligible_instances = []
 
 # Existing active ODCRs with unused slots, reported to the ops team via SNS
 unused_capacity_reservations = []
+
+# All active ODCRs by ID, to look up the end date of an ODCR a running instance already uses
+active_odcrs = {}
 
 for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
     Filters=[
@@ -36,6 +43,8 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
 ):
 
     for cr in cr_page["CapacityReservations"]:
+
+        active_odcrs[cr["CapacityReservationId"]] = cr
 
         if cr["AvailableInstanceCount"] == 0:
             continue
@@ -55,7 +64,7 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
         })
 
 
-for page in paginator.paginate(
+for page in ec2.get_paginator("describe_instances").paginate(
     IncludeManagedResources=False,
     Filters=[
         {
@@ -99,7 +108,17 @@ for page in paginator.paginate(
             # ------------------------------
             if state == "running" and capacity_reservation_id:
 
-                skipped_instances.append({
+                # Missing from active_odcrs -> end date unknown -> attention-needed
+                odcr = active_odcrs.get(capacity_reservation_id, {})
+                odcr_end_type = odcr.get("EndDateType")
+                odcr_end = odcr.get("EndDate")
+
+                covers_end_date = (
+                    odcr_end_type == "unlimited"
+                    or (odcr_end is not None and odcr_end >= requested_end)
+                )
+
+                instances_with_existing_odcr.append({
                     "instanceId": instance["InstanceId"],
                     "state": state,
                     "instanceType": instance_type,
@@ -110,7 +129,10 @@ for page in paginator.paginate(
                     "tenancy":
                         instance["Placement"]["Tenancy"],
                     "capacityReservationId":
-                        capacity_reservation_id
+                        capacity_reservation_id,
+                    "odcrEndDateType": odcr_end_type,
+                    "odcrEndDate": odcr_end.isoformat() if odcr_end else None,
+                    "status": "covered" if covers_end_date else "attention-needed"
                 })
 
                 continue
@@ -158,7 +180,7 @@ for page in paginator.paginate(
                 "instanceCount": 1,
                 "instanceMatchCriteria": "open",
                 "endDateType": "limited",
-                "endDate": end_date
+                "endDate": end_date_iso
             })
 
 
@@ -190,7 +212,7 @@ for inst in instances:
             "instanceCount": 0,
             "instanceMatchCriteria": "open",
             "endDateType": "limited",
-            "endDate": end_date,
+            "endDate": end_date_iso,
             "instanceIds": []
         })
 
@@ -208,7 +230,7 @@ for inst in instances:
             "instanceCount": 1,
             "instanceMatchCriteria": "open",
             "endDateType": "limited",
-            "endDate": end_date,
+            "endDate": end_date_iso,
             "instanceIds": [inst["instanceId"]]
         })
 
@@ -219,7 +241,7 @@ capacity_reservation_requests = list(running_groups.values()) + stopped_requests
 result = {
     "capacityReservationRequests": capacity_reservation_requests,
     "instances": instances,
-    "skippedInstances": skipped_instances,
+    "instancesWithExistingOdcr": instances_with_existing_odcr,
     "ineligibleInstances": ineligible_instances,
     "unusedCapacityReservations": unused_capacity_reservations
 }
