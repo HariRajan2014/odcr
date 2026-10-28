@@ -162,8 +162,62 @@ for page in paginator.paginate(
             })
 
 
+# ------------------------------
+# Build ODCR requests for the Step Function Map (running groups first, then stopped)
+# Running -> aggregated per (type, platform, AZ, tenancy); capacity is already held
+# Stopped -> one request per instance; CreateCapacityReservation is all-or-nothing
+# ------------------------------
+running_groups = {}
+stopped_requests = []
+
+for inst in instances:
+
+    if inst["state"] == "running":
+
+        key = (
+            inst["instanceType"],
+            inst["instancePlatform"],
+            inst["availabilityZone"],
+            inst["tenancy"]
+        )
+
+        group = running_groups.setdefault(key, {
+            "state": "running",
+            "instanceType": inst["instanceType"],
+            "instancePlatform": inst["instancePlatform"],
+            "availabilityZone": inst["availabilityZone"],
+            "tenancy": inst["tenancy"],
+            "instanceCount": 0,
+            "instanceMatchCriteria": "open",
+            "endDateType": "limited",
+            "endDate": end_date,
+            "instanceIds": []
+        })
+
+        group["instanceCount"] += 1
+        group["instanceIds"].append(inst["instanceId"])
+
+    else:
+
+        stopped_requests.append({
+            "state": "stopped",
+            "instanceType": inst["instanceType"],
+            "instancePlatform": inst["instancePlatform"],
+            "availabilityZone": inst["availabilityZone"],
+            "tenancy": inst["tenancy"],
+            "instanceCount": 1,
+            "instanceMatchCriteria": "open",
+            "endDateType": "limited",
+            "endDate": end_date,
+            "instanceIds": [inst["instanceId"]]
+        })
+
+capacity_reservation_requests = list(running_groups.values()) + stopped_requests
+
+
 # Final result
 result = {
+    "capacityReservationRequests": capacity_reservation_requests,
     "instances": instances,
     "skippedInstances": skipped_instances,
     "ineligibleInstances": ineligible_instances,
