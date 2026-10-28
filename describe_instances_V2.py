@@ -11,9 +11,6 @@ end_date = "2026-10-26T23:59:00Z"
 # Create EC2 client
 ec2 = boto3.client("ec2", region_name=region)
 
-# Paginator for DescribeInstances
-paginator = ec2.get_paginator("describe_instances")
-
 # Instances that need a new ODCR
 instances = []
 
@@ -55,7 +52,7 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
         })
 
 
-for page in paginator.paginate(
+for page in ec2.get_paginator("describe_instances").paginate(
     IncludeManagedResources=False,
     Filters=[
         {
