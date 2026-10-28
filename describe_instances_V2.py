@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 
 # Inputs
-region = "eu-west-1"
+region = "us-east-1"
 families = ["g5", "g6", "t3", "c7i"]
 # UTC, DD-MM-YYYY HH:MM
 end_date_utc = "30-11-2026 23:59"
