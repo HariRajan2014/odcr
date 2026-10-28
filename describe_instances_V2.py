@@ -1,6 +1,13 @@
 import boto3
 import json
+import logging
 from datetime import datetime, timezone
+
+# Lambda already attaches a CloudWatch handler; basicConfig only takes effect on local runs (stderr)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
 # Inputs
@@ -248,11 +255,13 @@ for inst in instances_needing_odcr:
 
 capacity_reservation_requests = list(running_groups.values()) + stopped_requests
 
+# Per-instance detail goes to CloudWatch Logs only, to keep the Step Functions payload small
+logger.info(json.dumps({"instancesNeedingOdcr": instances_needing_odcr}))
+
 
 # Final result
 result = {
     "capacityReservationRequests": capacity_reservation_requests,
-    "instancesNeedingOdcr": instances_needing_odcr,
     "instancesWithExistingOdcr": instances_with_existing_odcr,
     "ineligibleInstances": ineligible_instances,
     "unusedCapacityReservations": unused_capacity_reservations
