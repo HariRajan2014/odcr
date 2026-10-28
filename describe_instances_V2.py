@@ -9,10 +9,19 @@ families = ["g5", "g6", "t3", "c7i"]
 # UTC, DD-MM-YYYY HH:MM
 end_date_utc = "30-11-2026 23:59"
 
+# formatting to utc format
 requested_end = datetime.strptime(end_date_utc, "%d-%m-%Y %H:%M").replace(tzinfo=timezone.utc)
 
 # ISO 8601 form required by EC2 CreateCapacityReservation
 end_date_iso = requested_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def expires_before_requested_end(odcr):
+    # Unknown ODCR (empty dict) has no end date info -> "yes" so it gets attention
+    if odcr.get("EndDateType") == "unlimited":
+        return "no"
+    odcr_end = odcr.get("EndDate")
+    return "no" if odcr_end and odcr_end >= requested_end else "yes"
 
 
 # Create EC2 client
@@ -21,16 +30,17 @@ ec2 = boto3.client("ec2", region_name=region)
 # Instances that need a new ODCR
 instances = []
 
-# Running instances already in an ODCR; status says whether that ODCR lasts until end_date_utc
+# Running instances with ODCR associated; expiresBeforeRequestedEndDate says if that ODCR ends before end_date_utc
 instances_with_existing_odcr = []
 
-# Instances that will never use an open ODCR (preference "none" or targeted), reported via SNS
+# Instances ineligible for an ODCR (preference "none" or targeted), reported via SNS
 ineligible_instances = []
 
-# Existing active ODCRs with unused slots, reported to the ops team via SNS
+# Existing active ODCRs with unused slots, reported to the ops team via SNS email. 
 unused_capacity_reservations = []
 
-# All active ODCRs by ID, to look up the end date of an ODCR a running instance already uses
+# Gather all active ODCRs by ID, to look up the end date of an ODCR a running instance already uses
+#
 active_odcrs = {}
 
 for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
@@ -60,7 +70,8 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
             "availableInstanceCount": cr["AvailableInstanceCount"],
             "endDateType": cr["EndDateType"],
             # Absent for unlimited ODCRs; datetime -> string for JSON output
-            "endDate": cr["EndDate"].isoformat() if cr.get("EndDate") else None
+            "endDate": cr["EndDate"].isoformat() if cr.get("EndDate") else None,
+            "expiresBeforeRequestedEndDate": expires_before_requested_end(cr)
         })
 
 
@@ -108,15 +119,8 @@ for page in ec2.get_paginator("describe_instances").paginate(
             # ------------------------------
             if state == "running" and capacity_reservation_id:
 
-                # Missing from active_odcrs -> end date unknown -> attention-needed
                 odcr = active_odcrs.get(capacity_reservation_id, {})
-                odcr_end_type = odcr.get("EndDateType")
                 odcr_end = odcr.get("EndDate")
-
-                covers_end_date = (
-                    odcr_end_type == "unlimited"
-                    or (odcr_end is not None and odcr_end >= requested_end)
-                )
 
                 instances_with_existing_odcr.append({
                     "instanceId": instance["InstanceId"],
@@ -130,9 +134,9 @@ for page in ec2.get_paginator("describe_instances").paginate(
                         instance["Placement"]["Tenancy"],
                     "capacityReservationId":
                         capacity_reservation_id,
-                    "odcrEndDateType": odcr_end_type,
+                    "odcrEndDateType": odcr.get("EndDateType"),
                     "odcrEndDate": odcr_end.isoformat() if odcr_end else None,
-                    "status": "covered" if covers_end_date else "attention-needed"
+                    "expiresBeforeRequestedEndDate": expires_before_requested_end(odcr)
                 })
 
                 continue
