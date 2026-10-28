@@ -10,6 +10,11 @@ logger.setLevel(logging.INFO)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
+def log_event(event, **fields):
+    # One flat JSON line per event so CloudWatch Logs Insights can filter by field
+    logger.info(json.dumps({"event": event, **fields}, default=str))
+
+
 # Inputs
 region = "us-east-1"
 families = ["g5", "g6", "t3", "c7i"]
@@ -21,6 +26,9 @@ requested_end = datetime.strptime(end_date_utc, "%d-%m-%Y %H:%M").replace(tzinfo
 
 # ISO 8601 form required by EC2 CreateCapacityReservation
 end_date_iso = requested_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+log_event("runStarted", region=region, families=families,
+          endDateUtc=end_date_utc, endDateIso=end_date_iso)
 
 
 def expires_before_requested_end(odcr):
@@ -45,6 +53,9 @@ ineligible_instances = []
 
 # Existing active ODCRs with unused slots, reported to the ops team via SNS email. 
 unused_capacity_reservations = []
+
+# Spot / Capacity Block instances seen and skipped (count only, for the run summary)
+skipped_lifecycle_count = 0
 
 # Gather all active ODCRs by ID, to look up the end date of an ODCR a running instance already uses
 # collect all active unused ODCR for reporting to the ops team - ideally it should be none.
@@ -81,6 +92,11 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
             "expiresBeforeRequestedEndDate": expires_before_requested_end(cr)
         })
 
+        log_event("unusedOdcr", **unused_capacity_reservations[-1])
+
+log_event("activeOdcrsCollected", activeOdcrCount=len(active_odcrs),
+          unusedOdcrCount=len(unused_capacity_reservations))
+
 # Iterate over all running and stopped instances matching the filters to determine their ODCR status
 
 for page in ec2.get_paginator("describe_instances").paginate(
@@ -112,6 +128,10 @@ for page in ec2.get_paginator("describe_instances").paginate(
             # InstanceLifecycle is absent (None) for On-Demand -> fall through and process
             # "spot" / "capacity-block" -> continue skips to the next instance
             if instance.get("InstanceLifecycle"):
+                skipped_lifecycle_count += 1
+                log_event("instanceDecision", decision="skipped-lifecycle",
+                          instanceId=instance["InstanceId"], instanceType=instance_type,
+                          lifecycle=instance["InstanceLifecycle"])
                 continue
 
             state = instance["State"]["Name"]
@@ -149,6 +169,9 @@ for page in ec2.get_paginator("describe_instances").paginate(
                     "expiresBeforeRequestedEndDate": expires_before_requested_end(odcr)
                 })
 
+                log_event("instanceDecision", decision="existing-odcr",
+                          **instances_with_existing_odcr[-1])
+
                 continue
 
             # ------------------------------
@@ -174,6 +197,13 @@ for page in ec2.get_paginator("describe_instances").paginate(
                         instance["Placement"]["Tenancy"],
                     "capacityReservationSpecification": cr_spec
                 })
+
+                log_event("instanceDecision", decision="ineligible",
+                          instanceId=instance["InstanceId"], state=state,
+                          instanceType=instance_type,
+                          availabilityZone=instance["Placement"]["AvailabilityZone"],
+                          preference=cr_spec.get("CapacityReservationPreference"),
+                          target=cr_spec.get("CapacityReservationTarget"))
 
                 continue
 
@@ -201,6 +231,9 @@ for page in ec2.get_paginator("describe_instances").paginate(
                 "endDateType": "limited",
                 "endDate": end_date_iso
             })
+
+            log_event("instanceDecision", decision="needs-odcr",
+                      **instances_needing_odcr[-1])
 
 
 # ------------------------------
@@ -255,8 +288,24 @@ for inst in instances_needing_odcr:
 
 capacity_reservation_requests = list(running_groups.values()) + stopped_requests
 
-# Per-instance detail goes to CloudWatch Logs only, to keep the Step Functions payload small
-logger.info(json.dumps({"instancesNeedingOdcr": instances_needing_odcr}))
+for req in capacity_reservation_requests:
+    log_event("odcrRequest", **req)
+
+log_event(
+    "runSummary",
+    skippedLifecycle=skipped_lifecycle_count,
+    instancesWithExistingOdcr=len(instances_with_existing_odcr),
+    existingOdcrExpiringBeforeEndDate=sum(
+        1 for i in instances_with_existing_odcr
+        if i["expiresBeforeRequestedEndDate"] == "yes"
+    ),
+    ineligibleInstances=len(ineligible_instances),
+    instancesNeedingOdcr=len(instances_needing_odcr),
+    odcrRequests=len(capacity_reservation_requests),
+    runningOdcrRequests=len(running_groups),
+    stoppedOdcrRequests=len(stopped_requests),
+    unusedOdcrs=len(unused_capacity_reservations)
+)
 
 
 # Final result
