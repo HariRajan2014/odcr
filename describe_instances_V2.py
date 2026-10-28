@@ -28,7 +28,7 @@ def expires_before_requested_end(odcr):
 ec2 = boto3.client("ec2", region_name=region)
 
 # Instances that need a new ODCR
-instances = []
+instances_needing_odcr = []
 
 # Running instances with ODCR associated; expiresBeforeRequestedEndDate says if that ODCR ends before end_date_utc
 instances_with_existing_odcr = []
@@ -40,7 +40,7 @@ ineligible_instances = []
 unused_capacity_reservations = []
 
 # Gather all active ODCRs by ID, to look up the end date of an ODCR a running instance already uses
-#
+# collect all active unused ODCR for reporting to the ops team - ideally it should be none.
 active_odcrs = {}
 
 for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
@@ -74,6 +74,7 @@ for cr_page in ec2.get_paginator("describe_capacity_reservations").paginate(
             "expiresBeforeRequestedEndDate": expires_before_requested_end(cr)
         })
 
+# Iterate over all running and stopped instances matching the filters to determine their ODCR status
 
 for page in ec2.get_paginator("describe_instances").paginate(
     IncludeManagedResources=False,
@@ -122,6 +123,8 @@ for page in ec2.get_paginator("describe_instances").paginate(
                 odcr = active_odcrs.get(capacity_reservation_id, {})
                 odcr_end = odcr.get("EndDate")
 
+# Add instance to the list of instances with an existing ODCR, this helps track which instances are already covered
+# This list will send as email notification to the ops team as part of the workflow in sfn.
                 instances_with_existing_odcr.append({
                     "instanceId": instance["InstanceId"],
                     "state": state,
@@ -142,7 +145,10 @@ for page in ec2.get_paginator("describe_instances").paginate(
                 continue
 
             # ------------------------------
-            # Won't use an open ODCR -> creating one would be wasted
+            # Instances Won't use an open ODCR -> creating one would be wasted
+            # These instances have a CapacityReservationPreference other than "open" 
+            # and are therefore ineligible for an open ODCR
+            # This will send in the email notification to the ops team as part of the workflow in sfn.
             # ------------------------------
             # Targeted instances have CapacityReservationTarget instead of a preference
             cr_spec = instance.get("CapacityReservationSpecification", {})
@@ -169,9 +175,11 @@ for page in ec2.get_paginator("describe_instances").paginate(
             # are alerted via CloudWatch and reported in unusedCapacityReservations for manual action.
 
             # ------------------------------
-            # Needs a new ODCR
+            # Needs a new ODCR - findout the instances and details that requires a new reservation
+            # only for these instances the ODCR needs to be created rest all the details collected for email
+            # notification to the ops team via the Step Function workflow
             # ------------------------------
-            instances.append({
+            instances_needing_odcr.append({
                 "instanceId": instance["InstanceId"],
                 "state": state,
                 "instanceType": instance_type,
@@ -196,7 +204,7 @@ for page in ec2.get_paginator("describe_instances").paginate(
 running_groups = {}
 stopped_requests = []
 
-for inst in instances:
+for inst in instances_needing_odcr:
 
     if inst["state"] == "running":
 
@@ -244,7 +252,7 @@ capacity_reservation_requests = list(running_groups.values()) + stopped_requests
 # Final result
 result = {
     "capacityReservationRequests": capacity_reservation_requests,
-    "instances": instances,
+    "instancesNeedingOdcr": instances_needing_odcr,
     "instancesWithExistingOdcr": instances_with_existing_odcr,
     "ineligibleInstances": ineligible_instances,
     "unusedCapacityReservations": unused_capacity_reservations
