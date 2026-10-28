@@ -20,6 +20,9 @@ instances = []
 # Running instances that already have a Capacity Reservation
 skipped_instances = []
 
+# Instances that will never use an open ODCR (preference "none" or targeted), reported via SNS
+ineligible_instances = []
+
 # Existing active ODCRs with unused slots, reported to the ops team via SNS
 unused_capacity_reservations = []
 
@@ -112,6 +115,29 @@ for page in paginator.paginate(
 
                 continue
 
+            # ------------------------------
+            # Won't use an open ODCR -> creating one would be wasted
+            # ------------------------------
+            # Targeted instances have CapacityReservationTarget instead of a preference
+            cr_spec = instance.get("CapacityReservationSpecification", {})
+
+            if cr_spec.get("CapacityReservationPreference") != "open":
+
+                ineligible_instances.append({
+                    "instanceId": instance["InstanceId"],
+                    "state": state,
+                    "instanceType": instance_type,
+                    "availabilityZone":
+                        instance["Placement"]["AvailabilityZone"],
+                    "instancePlatform":
+                        instance["PlatformDetails"],
+                    "tenancy":
+                        instance["Placement"]["Tenancy"],
+                    "capacityReservationSpecification": cr_spec
+                })
+
+                continue
+
             # Not handled by design: stopped instances already covered by an existing ODCR are
             # not detected. ODCR lifecycle is aligned to the patching window, and unused ODCRs
             # are alerted via CloudWatch and reported in unusedCapacityReservations for manual action.
@@ -140,6 +166,7 @@ for page in paginator.paginate(
 result = {
     "instances": instances,
     "skippedInstances": skipped_instances,
+    "ineligibleInstances": ineligible_instances,
     "unusedCapacityReservations": unused_capacity_reservations
 }
 
