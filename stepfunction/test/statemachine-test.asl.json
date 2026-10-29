@@ -1,0 +1,188 @@
+{
+  "Comment": "TEST COPY: Discover passes the execution input through (no Lambda); retry 2s x3, wait 30s, deadline check +1 min",
+  "QueryLanguage": "JSONata",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Condition": "{% $type($states.input.runHours) = 'number' and $states.input.runHours > 0 and $states.input.runHours <= 24 %}",
+          "Next": "Discover"
+        }
+      ],
+      "Default": "InvalidInput"
+    },
+    "InvalidInput": {
+      "Type": "Pass",
+      "Output": {
+        "stage": "ValidateInput",
+        "error": "InvalidRunHours",
+        "cause": "runHours must be a number greater than 0 and at most 24"
+      },
+      "Next": "FailureReport"
+    },
+    "Discover": {
+      "Type": "Pass",
+      "Next": "Init"
+    },
+    "Init": {
+      "Type": "Pass",
+      "Assign": {
+        "discovery": "{% $states.input %}",
+        "requests": "{% $states.input.capacityReservationRequests %}",
+        "pendingIdx": "{% [0..($count($states.input.capacityReservationRequests) - 1)] %}",
+        "created": [],
+        "lastFailures": [],
+        "iteration": 0,
+        "deadline": "{% ($exists($states.context.Execution.Input.scheduledTime) ? $toMillis($states.context.Execution.Input.scheduledTime) : $toMillis($states.context.Execution.StartTime)) + $states.context.Execution.Input.runHours * 60 * 60 * 1000 %}"
+      },
+      "Next": "CreateODCRs"
+    },
+    "CreateODCRs": {
+      "Type": "Map",
+      "Items": "{% [$map($pendingIdx, function($i) { { 'index': $i, 'request': $requests[$i] } })] %}",
+      "MaxConcurrency": 10,
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "CreateCapacityReservation",
+        "States": {
+          "CreateCapacityReservation": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ec2:createCapacityReservation",
+            "Arguments": {
+              "InstanceType": "{% $states.input.request.instanceType %}",
+              "InstancePlatform": "{% $states.input.request.instancePlatform %}",
+              "AvailabilityZone": "{% $states.input.request.availabilityZone %}",
+              "Tenancy": "{% $states.input.request.tenancy %}",
+              "InstanceCount": "{% $states.input.request.instanceCount %}",
+              "InstanceMatchCriteria": "{% $states.input.request.instanceMatchCriteria %}",
+              "EndDateType": "{% $states.input.request.endDateType %}",
+              "EndDate": "{% $states.input.request.endDate %}"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 2,
+                "BackoffRate": 3,
+                "MaxAttempts": 3
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Output": {
+                  "status": "failed",
+                  "index": "{% $states.input.index %}",
+                  "error": "{% $states.errorOutput.Error %}",
+                  "cause": "{% $states.errorOutput.Cause %}"
+                },
+                "Next": "RecordFailure"
+              }
+            ],
+            "Output": {
+              "status": "created",
+              "index": "{% $states.input.index %}",
+              "capacityReservationId": "{% $states.result.CapacityReservation.CapacityReservationId %}"
+            },
+            "End": true
+          },
+          "RecordFailure": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "Assign": {
+        "created": "{% $append($created, [$states.result[status = 'created']]) %}",
+        "pendingIdx": "{% [$states.result[status = 'failed'].index] %}",
+        "lastFailures": "{% [$states.result[status = 'failed']] %}",
+        "iteration": "{% $iteration + 1 %}"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Output": {
+            "stage": "CreateODCRs",
+            "error": "{% $states.errorOutput.Error %}",
+            "cause": "{% $states.errorOutput.Cause %}"
+          },
+          "Next": "FailureReport"
+        }
+      ],
+      "Next": "AnyFailed"
+    },
+    "AnyFailed": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Condition": "{% $count($pendingIdx) > 0 and ($toMillis($now()) + 60 * 1000) <= $deadline %}",
+          "Next": "WaitBeforeNextPass"
+        }
+      ],
+      "Default": "BuildSummary"
+    },
+    "WaitBeforeNextPass": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "CreateODCRs"
+    },
+    "BuildSummary": {
+      "Type": "Pass",
+      "Output": {
+        "region": "{% $states.context.Execution.Input.region %}",
+        "endDateUtc": "{% $states.context.Execution.Input.endDateUtc %}",
+        "runHours": "{% $states.context.Execution.Input.runHours %}",
+        "passesUsed": "{% $iteration %}",
+        "counts": {
+          "odcrRequests": "{% $count($requests) %}",
+          "created": "{% $count($created) %}",
+          "failed": "{% $count($pendingIdx) %}",
+          "instancesWithExistingOdcr": "{% $count($discovery.instancesWithExistingOdcr) %}",
+          "existingOdcrExpiringBeforeEndDate": "{% $count($discovery.instancesWithExistingOdcr[expiresBeforeRequestedEndDate = 'yes']) %}",
+          "ineligibleInstances": "{% $count($discovery.ineligibleInstances) %}",
+          "unusedOdcrs": "{% $count($discovery.unusedCapacityReservations) %}"
+        },
+        "created": "{% [$map($created, function($c) { $merge([$requests[$c.index], { 'capacityReservationId': $c.capacityReservationId }]) })] %}",
+        "failed": "{% [$map($lastFailures, function($f) { $merge([$requests[$f.index], { 'error': $f.error, 'cause': $f.cause }]) })] %}",
+        "instancesWithExistingOdcr": "{% $discovery.instancesWithExistingOdcr %}",
+        "ineligibleInstances": "{% $discovery.ineligibleInstances %}",
+        "unusedCapacityReservations": "{% $discovery.unusedCapacityReservations %}"
+      },
+      "Next": "ActivityReport"
+    },
+    "ActivityReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "TopicArn": "arn:aws:sns:us-east-1:252303746749:odcr-report",
+        "Subject": "{% 'ODCR report ' & $states.input.region & ': ' & $string($states.input.counts.created) & ' created, ' & $string($states.input.counts.failed) & ' failed' %}",
+        "Message": "{% $string($states.input, true) %}"
+      },
+      "End": true
+    },
+    "FailureReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "TopicArn": "arn:aws:sns:us-east-1:252303746749:odcr-report",
+        "Subject": "{% 'ODCR workflow FAILED at ' & $states.input.stage %}",
+        "Message": "{% $string({ 'execution': $states.context.Execution.Id, 'input': $states.context.Execution.Input, 'error': $states.input }, true) %}"
+      },
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Error": "OdcrWorkflowFailed",
+      "Cause": "See the FailureReport email"
+    }
+  }
+}

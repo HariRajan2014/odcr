@@ -1,0 +1,147 @@
+{
+  "region": "us-east-1",
+  "families": ["t3", "g5", "g6", "c7i"],
+  "endDateUtc": "30-10-2026 23:59",
+  "runHours": 0.1,
+  "capacityReservationRequests": [
+    {
+      "state": "running",
+      "instanceType": "t3.micro",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1c",
+      "tenancy": "default",
+      "instanceCount": 1,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2026-10-30T23:59:00Z",
+      "instanceIds": ["i-0fc9829e4c126615a"]
+    },
+    {
+      "state": "stopped",
+      "instanceType": "t3.micro",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1z",
+      "tenancy": "default",
+      "instanceCount": 1,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2026-10-30T23:59:00Z",
+      "instanceIds": ["i-0badaz00000000001"]
+    },
+    {
+      "state": "stopped",
+      "instanceType": "g5.notreal",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1a",
+      "tenancy": "default",
+      "instanceCount": 1,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2026-10-30T23:59:00Z",
+      "instanceIds": ["i-0badtype0000000002"]
+    },
+    {
+      "state": "running",
+      "instanceType": "g6.xlarge",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1b",
+      "tenancy": "default",
+      "instanceCount": 0,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2026-10-30T23:59:00Z",
+      "instanceIds": []
+    },
+    {
+      "state": "stopped",
+      "instanceType": "c7i.large",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1d",
+      "tenancy": "default",
+      "instanceCount": 1,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2020-01-01T00:00:00Z",
+      "instanceIds": ["i-0pastdate000000003"]
+    },
+    {
+      "state": "stopped",
+      "instanceType": "g5.xlarge",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "eu-west-1a",
+      "tenancy": "default",
+      "instanceCount": 1,
+      "instanceMatchCriteria": "open",
+      "endDateType": "limited",
+      "endDate": "2026-10-30T23:59:00Z",
+      "instanceIds": ["i-0wrongregion000004"]
+    }
+  ],
+  "instancesWithExistingOdcr": [
+    {
+      "instanceId": "i-0f1f1f1f1f1f1f1f1",
+      "state": "running",
+      "instanceType": "g5.xlarge",
+      "availabilityZone": "us-east-1a",
+      "instancePlatform": "Linux/UNIX",
+      "tenancy": "default",
+      "capacityReservationId": "cr-0aaaaaaaaaaaaaaa1",
+      "odcrEndDateType": "unlimited",
+      "odcrEndDate": null,
+      "expiresBeforeRequestedEndDate": "no"
+    },
+    {
+      "instanceId": "i-0f2f2f2f2f2f2f2f2",
+      "state": "running",
+      "instanceType": "g6.2xlarge",
+      "availabilityZone": "us-east-1b",
+      "instancePlatform": "Linux/UNIX",
+      "tenancy": "default",
+      "capacityReservationId": "cr-0bbbbbbbbbbbbbbb2",
+      "odcrEndDateType": "limited",
+      "odcrEndDate": "2026-10-30T12:00:00+00:00",
+      "expiresBeforeRequestedEndDate": "yes"
+    }
+  ],
+  "ineligibleInstances": [
+    {
+      "instanceId": "i-0f3f3f3f3f3f3f3f3",
+      "state": "running",
+      "instanceType": "g5.2xlarge",
+      "availabilityZone": "us-east-1c",
+      "instancePlatform": "Linux/UNIX",
+      "tenancy": "default",
+      "capacityReservationSpecification": {
+        "CapacityReservationPreference": "none"
+      }
+    },
+    {
+      "instanceId": "i-0f4f4f4f4f4f4f4f4",
+      "state": "stopped",
+      "instanceType": "c7i.large",
+      "availabilityZone": "us-east-1d",
+      "instancePlatform": "Linux/UNIX",
+      "tenancy": "default",
+      "capacityReservationSpecification": {
+        "CapacityReservationTarget": {
+          "CapacityReservationId": "cr-0ccccccccccccccc3"
+        }
+      }
+    }
+  ],
+  "unusedCapacityReservations": [
+    {
+      "capacityReservationId": "cr-0ddddddddddddddd4",
+      "instanceType": "g5.xlarge",
+      "instancePlatform": "Linux/UNIX",
+      "availabilityZone": "us-east-1a",
+      "tenancy": "default",
+      "instanceMatchCriteria": "open",
+      "totalInstanceCount": 3,
+      "availableInstanceCount": 2,
+      "endDateType": "limited",
+      "endDate": "2026-10-30T12:00:00+00:00",
+      "expiresBeforeRequestedEndDate": "yes"
+    }
+  ]
+}
