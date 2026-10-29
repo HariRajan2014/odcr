@@ -10,7 +10,7 @@
   "Target": {
     "Arn": "arn:aws:states:us-east-1:252303746749:stateMachine:odcr-capacity-reservation",
     "RoleArn": "arn:aws:iam::252303746749:role/odcr-scheduler-role",
-    "Input": "{\"region\":\"us-east-1\",\"families\":[\"g5\",\"g6\"],\"endDateUtc\":\"30-11-2026 23:59\",\"runHours\":5,\"scheduledTime\":\"<aws.scheduler.scheduled-time>\"}",
+    "Input": "{\"region\":\"us-east-1\",\"families\":[\"t3\"],\"endDateUtc\":\"30-11-2026 23:59\",\"runHours\":5,\"scheduledTime\":\"<aws.scheduler.scheduled-time>\"}",
     "RetryPolicy": {
       "MaximumEventAgeInSeconds": 3600,
       "MaximumRetryAttempts": 5
