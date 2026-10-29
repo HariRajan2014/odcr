@@ -36,7 +36,6 @@
         "lastFailures": [],
         "permanentFailures": [],
         "iteration": 0,
-        "runKey": "{% $exists($states.context.Execution.Input.scheduledTime) ? $states.context.Execution.Input.scheduledTime : $states.context.Execution.Name %}",
         "deadline": "{% ($exists($states.context.Execution.Input.scheduledTime) ? $toMillis($states.context.Execution.Input.scheduledTime) : $toMillis($states.context.Execution.StartTime)) + $states.context.Execution.Input.runHours * 60 * 60 * 1000 %}"
       },
       "Next": "CreateODCRs"
@@ -63,7 +62,7 @@
               "InstanceMatchCriteria": "{% $states.input.request.instanceMatchCriteria %}",
               "EndDateType": "{% $states.input.request.endDateType %}",
               "EndDate": "{% $states.input.request.endDate %}",
-              "ClientToken": "{% $hash($runKey & '-' & $string($states.input.index) & '-' & $string($iteration), 'MD5') %}"
+              "ClientToken": "{% ($r := $states.input.request; $hash($join([$r.instanceType, $r.instancePlatform, $r.availabilityZone, $r.tenancy, $string($r.instanceCount), $r.endDate, $join($sort($r.instanceIds), ',')], '|'), 'MD5')) %}"
             },
             "Retry": [
               {
@@ -90,11 +89,7 @@
                 "Next": "RecordFailure"
               }
             ],
-            "Output": {
-              "status": "created",
-              "index": "{% $states.input.index %}",
-              "capacityReservationId": "{% $states.result.CapacityReservation.CapacityReservationId %}"
-            },
+            "Output": "{% ($cr := $states.result.CapacityReservation; $cr.State in ['active', 'pending'] ? { 'status': $toMillis($cr.CreateDate) >= $floor($toMillis($states.context.Execution.StartTime) / 1000) * 1000 ? 'created' : 'reused', 'index': $states.input.index, 'capacityReservationId': $cr.CapacityReservationId } : { 'status': 'failed', 'index': $states.input.index, 'error': 'InactiveOdcrForToken', 'cause': 'ClientToken matched ' & $cr.CapacityReservationId & ' which is ' & $cr.State, 'permanent': true }) %}",
             "End": true
           },
           "RecordFailure": {
@@ -104,7 +99,7 @@
         }
       },
       "Assign": {
-        "created": "{% $append($created, [$states.result[status = 'created']]) %}",
+        "created": "{% $append($created, [$states.result[status = 'created' or status = 'reused']]) %}",
         "pendingIdx": "{% [$states.result[status = 'failed' and permanent = false].index] %}",
         "lastFailures": "{% [$states.result[status = 'failed' and permanent = false]] %}",
         "permanentFailures": "{% $append($permanentFailures, [$states.result[status = 'failed' and permanent = true]]) %}",
@@ -149,7 +144,8 @@
         "passesUsed": "{% $iteration %}",
         "counts": {
           "odcrRequests": "{% $count($requests) %}",
-          "created": "{% $count($created) %}",
+          "created": "{% $count($created[status = 'created']) %}",
+          "reused": "{% $count($created[status = 'reused']) %}",
           "failed": "{% $count($pendingIdx) + $count($permanentFailures) %}",
           "failedPermanent": "{% $count($permanentFailures) %}",
           "failedRetriesExhausted": "{% $count($pendingIdx) %}",
@@ -158,7 +154,7 @@
           "ineligibleInstances": "{% $count($discovery.ineligibleInstances) %}",
           "unusedOdcrs": "{% $count($discovery.unusedCapacityReservations) %}"
         },
-        "created": "{% [$map($created, function($c) { $merge([$requests[$c.index], { 'capacityReservationId': $c.capacityReservationId }]) })] %}",
+        "created": "{% [$map($created, function($c) { $merge([$requests[$c.index], { 'status': $c.status, 'capacityReservationId': $c.capacityReservationId }]) })] %}",
         "failed": "{% [$map($append($permanentFailures, $lastFailures), function($f) { $merge([$requests[$f.index], { 'failureType': $f.permanent ? 'permanent' : 'retries-exhausted', 'error': $f.error, 'cause': $f.cause }]) })] %}",
         "instancesWithExistingOdcr": "{% $discovery.instancesWithExistingOdcr %}",
         "ineligibleInstances": "{% $discovery.ineligibleInstances %}",
@@ -171,7 +167,7 @@
       "Resource": "arn:aws:states:::sns:publish",
       "Arguments": {
         "TopicArn": "arn:aws:sns:us-east-1:252303746749:odcr-report",
-        "Subject": "{% 'ODCR report ' & $states.input.region & ': ' & $string($states.input.counts.created) & ' created, ' & $string($states.input.counts.failed) & ' failed' %}",
+        "Subject": "{% 'ODCR report ' & $states.input.region & ': ' & $string($states.input.counts.created) & ' created, ' & $string($states.input.counts.reused) & ' reused, ' & $string($states.input.counts.failed) & ' failed' %}",
         "Message": "{% $string($states.input, true) %}"
       },
       "Retry": [
