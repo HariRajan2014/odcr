@@ -1,0 +1,22 @@
+{
+  "Name": "odcr-patch-20261129-0225",
+  "GroupName": "odcr",
+  "Description": "ODCR for GPU patching window; retries for runHours from the scheduled time",
+  "ScheduleExpression": "at(2026-11-29T02:25:00)",
+  "ScheduleExpressionTimezone": "UTC",
+  "FlexibleTimeWindow": { "Mode": "OFF" },
+  "State": "ENABLED",
+  "ActionAfterCompletion": "NONE",
+  "Target": {
+    "Arn": "arn:aws:states:us-east-1:252303746749:stateMachine:odcr-capacity-reservation",
+    "RoleArn": "arn:aws:iam::252303746749:role/odcr-scheduler-role",
+    "Input": "{\"region\":\"us-east-1\",\"families\":[\"g5\",\"g6\"],\"endDateUtc\":\"30-11-2026 23:59\",\"runHours\":5,\"scheduledTime\":\"<aws.scheduler.scheduled-time>\"}",
+    "RetryPolicy": {
+      "MaximumEventAgeInSeconds": 3600,
+      "MaximumRetryAttempts": 5
+    },
+    "DeadLetterConfig": {
+      "Arn": "arn:aws:sqs:us-east-1:252303746749:odcr-scheduler-dlq"
+    }
+  }
+}
